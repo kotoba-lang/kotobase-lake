@@ -23,8 +23,13 @@ jobs:
       # assertions failed here while the JVM reported 0 failures.
       - run: npm install -g nbb
       - name: ClojureScript (nbb, interpreted)
-        run: |
-          nbb --classpath "src:test:$(clojure -Spath | tr ':' '\n' | grep datom-source | head -1)" test/run.cljs
+        # The WHOLE classpath, not a grep for the dependency this repo
+        # happened to have when the step was written. That form was fail-open:
+        # adding `columnar` left it silently absent and the step died with
+        # "Could not find namespace", which reads like a code error rather
+        # than a build one. Caught by CI, having passed locally, because
+        # locally the full -Spath was used.
+        run: nbb --classpath "src:test:$(clojure -Spath)" test/run.cljs
 
       # And under real compilation, which nbb's SCI interpretation cannot
       # stand in for.
