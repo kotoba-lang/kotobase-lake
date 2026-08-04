@@ -11,6 +11,7 @@
             [kotobase.lake.reader-test]
             [kotobase.lake.sniff-test]
             [kotobase.lake.acquire-test]
+            [kotobase.lake.table-test]
             [kotobase.lake.tabular-test]))
 
 (defmethod t/report [::t/default :end-run-tests] [m]
@@ -22,4 +23,5 @@
                'kotobase.lake.catalog-test
                'kotobase.lake.reader-test
              'kotobase.lake.tabular-test
-             'kotobase.lake.acquire-test))
+             'kotobase.lake.acquire-test
+             'kotobase.lake.table-test))

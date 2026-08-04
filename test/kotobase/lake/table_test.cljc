@@ -1,0 +1,124 @@
+(ns kotobase.lake.table-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [datom.source :as source]
+            [kotobase.lake.table :as table]))
+
+(def tbl (table/table-id "acme" "sales"))
+
+;; Three files, hive-partitioned by region, disjoint price ranges. `west` has
+;; no price statistics at all — the normal state for a writer that recorded
+;; none, and the one that must never be pruned away.
+(def manifest
+  (into #{}
+        (mapcat table/add-member)
+        [{:table tbl :cid "bafkA" :rows 2 :partition {"region" "east"}
+          :statistics {"price" {:nulls 0 :min 10 :max 30}}}
+         {:table tbl :cid "bafkB" :rows 2 :partition {"region" "east"}
+          :statistics {"price" {:nulls 0 :min 110 :max 130}}}
+         {:table tbl :cid "bafkC" :rows 2 :partition {"region" "west"}
+          :statistics {}}]))
+
+(defn- rows-for [cid]
+  (case cid
+    "bafkA" [[10] [30]]
+    "bafkB" [[110] [130]]
+    "bafkC" [[210] [230]]))
+
+(defn- opener [opened]
+  (fn [{:keys [cid object]}]
+    (swap! opened conj cid)
+    (source/of-quads
+     (for [[i [price]] (map-indexed vector (rows-for cid))]
+       {:s (str object "#row" i) :p "price" :o price}))))
+
+(defn- table-src [opened & [on-prune]]
+  (table/table-source {:quads manifest :table tbl
+                       :open-member (opener opened)
+                       :on-prune on-prune}))
+
+;; ── the point of the namespace ──────────────────────────────────────────────
+
+(deftest a-partition-predicate-opens-nothing-it-can-rule-out
+  (let [opened (atom #{}) pruned (atom nil)
+        src (table-src opened #(reset! pruned %))]
+    (source/scan-set src [nil "price" 120])
+    (is (= #{"bafkB" "bafkC"} @opened)
+        "bafkA ruled out by price statistics; bafkC has none and so must be
+         opened — absent statistics never permit a skip, one level up exactly
+         as inside a file")
+    (is (= 1 (:skipped @pruned))))
+  (testing "a predicate on the partition column prunes without opening anything"
+    (let [opened (atom #{})
+          src (table-src opened)]
+      (is (= #{{:s "obj:bafkC#row0" :p "region" :o "west"}
+               {:s "obj:bafkC#row1" :p "region" :o "west"}}
+             (source/scan-set src [nil "region" "west"])))
+      (is (empty? @opened)
+          "no file contains its partition column, so the answer comes from the
+           manifest and not one byte is read"))))
+
+(deftest a-partition-column-is-answered-from-the-manifest
+  (let [opened (atom #{})
+        src (table-src opened)]
+    (is (= 6 (count (source/scan-set src [nil "region" nil])))
+        "3 files x 2 rows, all from row counts in the manifest")
+    (is (empty? @opened))
+    (testing "and it is the value from the path, which no file holds"
+      (is (= #{"east" "west"} (into #{} (map :o) (source/scan-set src [nil "region" nil])))))))
+
+(deftest data-and-partition-columns-come-back-together
+  (let [opened (atom #{})
+        all (source/scan-set (table-src opened) [nil nil nil])]
+    (is (= 12 (count all)) "6 price datoms + 6 region datoms")
+    (is (= #{"price" "region"} (into #{} (map :p) all)))
+    (is (= #{"bafkA" "bafkB" "bafkC"} @opened)
+        "an unbound pattern cannot prune, and says so by opening everything")))
+
+;; ── pruning is the same operation as inside a file ──────────────────────────
+
+(deftest file-pruning-follows-the-same-rules-as-row-group-pruning
+  (let [ms (table/members manifest tbl)]
+    (testing "statistics rule a file out"
+      (is (true? (table/skip-member? (first (filter #(= "bafkA" (:cid %)) ms))
+                                     [[:= "price" 120]]))))
+    (testing "absent statistics never do"
+      (is (false? (table/skip-member? (first (filter #(= "bafkC" (:cid %)) ms))
+                                      [[:= "price" 120]]))
+          "the file gets opened: slower, and never a missing row"))
+    (testing "a partition value rules a file out for free"
+      (is (true? (table/skip-member? (first (filter #(= "bafkC" (:cid %)) ms))
+                                     [[:= "region" "east"]])))
+      (is (false? (table/skip-member? (first (filter #(= "bafkA" (:cid %)) ms))
+                                      [[:= "region" "east"]]))))
+    (testing "a range over a partition value is not guessed at"
+      (is (false? (table/skip-member? (first (filter #(= "bafkC" (:cid %)) ms))
+                                      [[:> "region" "zzz"]]))
+          "comparable in principle, deliberately not attempted — a wrong skip
+           here loses a whole file"))))
+
+;; ── the manifest is queryable, not a blob ───────────────────────────────────
+
+(deftest the-manifest-is-datoms-on-the-same-plane
+  (let [ms (table/members manifest tbl)]
+    (is (= 3 (count ms)))
+    (is (= #{"east" "west"} (into #{} (map #(get-in % [:partition "region"])) ms)))
+    (is (= {:nulls 0 :min 10 :max 30}
+           (get-in (first (filter #(= "bafkA" (:cid %)) ms)) [:statistics "price"])))
+    (testing "and members come back in a deterministic order"
+      (is (= ["bafkA" "bafkB" "bafkC"] (mapv :cid ms))
+          "the manifest is a set; without sorting, the order files are opened
+           in is whatever the collection iterates in today"))
+    (testing "attribute per column, so a query plane can see into it"
+      (is (contains? (into #{} (map :p) manifest) "member/min/price"))
+      (is (contains? (into #{} (map :p) manifest) "member/partition/region")))))
+
+(deftest a-member-is-opened-at-most-once
+  (let [opened (atom [])
+        src (table/table-source {:quads manifest :table tbl
+                                 :open-member (fn [{:keys [cid object]}]
+                                                (swap! opened conj cid)
+                                                (source/of-quads
+                                                 [{:s (str object "#row0") :p "price" :o 1}]))})]
+    (source/scan-set src [nil "price" 1])
+    (source/scan-set src [nil "price" 1])
+    (is (= (distinct @opened) @opened) "memoised across scans")))
