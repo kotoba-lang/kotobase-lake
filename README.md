@@ -236,7 +236,7 @@ analytic-scan story is a separate question from the accept-anything one.
 
 ```sh
 clojure -M:test                                              # JVM
-nbb --classpath "src:test:$(clojure -Spath | tr ':' '\n' | grep datom-source)" test/run.cljs
+nbb --classpath "src:test:$(clojure -Spath)" test/run.cljs
 clojure -M:cljs -m cljs.main --target node -m kotobase.lake.cljs-runner
 clojure -M:lint
 ```
