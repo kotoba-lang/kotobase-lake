@@ -34,15 +34,50 @@
             [kotobase.lake.sniff :as sniff]))
 
 (defn registry
-  "An empty decoder registry."
+  "An empty reader registry."
   []
   {})
 
 (defn register
-  "Register `decoder` for `media-type`. Type is normalised, so
-  `text/csv; charset=utf-8` and `TEXT/CSV` register the same decoder."
+  "Register a **materializing** decoder for `media-type`: `(fn [bytes ctx] ->
+  quads)`. Type is normalised, so `text/csv; charset=utf-8` and `TEXT/CSV`
+  register the same decoder."
   [reg media-type decoder]
-  (assoc reg (sniff/normalize-media-type media-type) decoder))
+  (assoc reg (sniff/normalize-media-type media-type) {::access :materialize
+                                                     ::fn decoder}))
+
+(defn register-scan
+  "Register a **scanning** reader for `media-type`: `(fn [handle] -> an
+  IPatternSource)`, where handle is
+  `{:cid :size-bytes :read-range :subject-prefix}`.
+
+  The two profiles are declared rather than inferred, for the same reason
+  `kotobase-storage` makes a backend declare its ref profile: a caller cannot
+  discover by trying, and the failure of guessing is silent. A format with a
+  footer and per-chunk statistics — Parquet, ORC, Arrow IPC — can answer a
+  pattern by reading byte ranges and belongs here. CSV, JSON, NDJSON, EDN and
+  every log format must be read whole to answer anything at all and belong in
+  `register`; that is a property of those formats, not a gap to close later."
+  [reg media-type f]
+  (assoc reg (sniff/normalize-media-type media-type) {::access :scan ::fn f}))
+
+(defn access
+  "`:scan`, `:materialize`, or nil when nothing is registered for this type."
+  [reg media-type]
+  (::access (get reg (sniff/normalize-media-type media-type))))
+
+(defn scan-reader
+  "The scanning reader for `media-type`, or nil. A materializing decoder is
+  deliberately not returned here: it cannot answer a pattern without reading
+  the whole object, and silently substituting one would turn a range read into
+  a full download at the moment the file got big enough to matter."
+  [reg media-type]
+  (let [e (get reg (sniff/normalize-media-type media-type))]
+    (when (= :scan (::access e)) (::fn e))))
+
+(defn- decoder-for [reg media-type]
+  (let [e (get reg (sniff/normalize-media-type media-type))]
+    (when (= :materialize (::access e)) (::fn e))))
 
 (defn candidate-types
   "Ordered, de-duplicated hypotheses about what this claim holds.
@@ -67,7 +102,7 @@
   [reg {:keys [claim-id object-id] :as claim} bytes]
   (let [tried (candidate-types claim)]
     (or (some (fn [mt]
-                (when-let [decoder (get reg mt)]
+                (when-let [decoder (decoder-for reg mt)]
                   (try
                     {:decoded? true
                      :via mt

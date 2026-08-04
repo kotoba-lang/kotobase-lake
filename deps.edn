@@ -4,7 +4,14 @@
  ;; `IPatternSource` is the declared seam every kotobase query path plugs
  ;; into -- a second definition of that protocol would be a second thing for
  ;; a query surface to fail to recognise.
- :deps {io.github.kotoba-lang/datom-source
+ :deps {;; The execution engine the scan path runs on. Zero-dep itself, so the
+        ;; transitive cost of pulling it in is nil, and the lake's read side
+        ;; genuinely needs an engine — kotobase.lake.columnar is the ten-line
+        ;; join between them.
+        io.github.kotoba-lang/columnar
+        {:git/url "https://github.com/kotoba-lang/columnar.git"
+         :git/sha "b0862f6d41bbd45744362433e658f8b7e2f3ecca"}
+        io.github.kotoba-lang/datom-source
         {:git/url "https://github.com/kotoba-lang/datom-source.git"
          :git/sha "b42f6e6ff942c7f8a2856f8142ebffc13aa11098"}}
  :aliases

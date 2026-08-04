@@ -134,6 +134,35 @@ corpus contains exactly that multi-valued pair, so a wide table cannot
 represent the suite. `wide-source` gets its own corpus, plus a test pinning
 the limitation so it is documented rather than discovered.
 
+### Getting one, for a catalogued object
+
+`kotobase.lake.acquire/source-for` is where the catalog, the reader registry
+and a tenant meet — and therefore the only place authorization can happen.
+
+**A tenant with no holding gets the same answer as a nonexistent object.**
+Exactly the rule the grant endpoint applies to reads (ADR-2608012600 D4), for
+the same reason: objects are keyed globally by CID because dedup is what
+content addressing already did, so tenant scope lives in `:holding/*` and
+never in the key. "Exists, but not yours" is a sentence this system must not
+say — CIDs are guessable for any content a caller can construct, so telling
+the two apart turns the catalog into a membership oracle over every tenant's
+data. The test asserts the two refusals are `=`, not merely both falsey; a
+stray `:reason` key would leak exactly as well as a status code.
+
+Authorization happens **at acquisition, not at every scan**. A source is
+scanned many times by a planner; checking a tenant on every `-scan` would put
+a policy decision on the hot path and produce a source that is *sometimes*
+readable, which nothing downstream is built for.
+
+Nothing is fetched before the gate: the handle carries `read-range` — a
+capability — rather than bytes, and it reaches a reader only after the check
+passes. An unauthorized caller costs one catalog lookup and no transfer.
+
+Readers declare `:scan` or `:materialize`, and asking for a scanning reader
+never yields a materializing one. Substituting silently would turn a range
+read into a full download at exactly the moment the file got big enough to
+matter.
+
 A NULL cell yields **no datom**. EAV has no way to say "the value is nil", and
 inventing one would make `[nil "note" nil]` return a row for every object that
 has no note.
