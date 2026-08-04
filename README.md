@@ -192,6 +192,54 @@ type: a `:gzip` observation against a `text/csv` claim is scored `:enveloped`,
 not `:conflict`. Scoring it as a mismatch would flag most of the compressed
 data any lake ever receives.
 
+## A table is N files
+
+`kotobase.lake.table` is what makes this a lake rather than a very careful
+single-file reader. A table is a set of objects under a prefix —
+`region=east/part-0.parquet` and a thousand siblings — and a query over it
+must not open a thousand footers to answer a question about three files.
+
+**The manifest is datoms**, one attribute per column, on the same plane as
+everything else:
+
+```
+member/table             table:acme|sales
+member/object            obj:bafk…
+member/rows              1000
+member/partition/region  "east"
+member/min/price         10
+member/max/price         30
+```
+
+So "which files did this tenant land last week, and what is the price range in
+them" is one query, not a directory walk plus a thousand reads. A blob of EDN
+under a single attribute would be a manifest the query plane cannot see into.
+
+**Pruning a file is the same operation as pruning a row group.** File
+statistics have the shape `columnar.stats/skip?` already reads, so it is
+literally the same function one level up — including the rule that matters
+most: *absent statistics never permit a skip*. A manifest entry with no bounds
+for a column means that file gets opened. Slower, and never a missing row.
+
+**Partition columns are not in the files.** `region=east/part-0.parquet` has no
+`region` column; the value is in the path. Two things follow:
+
+1. A predicate on a partition column prunes **without opening anything** — no
+   footer, no range read. The cheapest pruning in the system, and the reason
+   partitioning exists.
+2. A query that *asks for* a partition column is answered from the manifest,
+   because no file contains it. Row counts are there and subjects derive from
+   the object id, so those datoms are synthesised without a byte of any file.
+
+**Members open lazily, per scan.** `open-member` is called for survivors only,
+inside `-scan`. Constructing sources up front and merging them is the natural
+shape and would defeat the whole namespace: the pruning would be perfect and
+every file would already be open.
+
+`members` returns a deterministic order. The manifest is a set, so without
+sorting, the order files are opened in — and rows come back in, when a caller
+imposes none — is whatever the collection iterates in today.
+
 ## Where this sits
 
 ```
