@@ -95,6 +95,49 @@ accepted:
 `datom.source/IPatternSource`, so a single query can ask for rows *and* their
 provenance.
 
+### …but decoding is not querying in place
+
+`reader/decode` reads the whole object and returns all of its rows. That is
+right for a 4 KB JSON blob and useless for a 40 GB Parquet file.
+`kotobase.lake.tabular` is the other half: the object stays where it is and an
+engine that already knows how to read it answers **one pattern at a time**.
+
+A triple pattern turns out to be exactly what a columnar file is built to
+serve — a projection and a filter:
+
+| pattern | what the engine is asked for |
+|---|---|
+| `[?row "price" nil]` | the `price` column, and nothing else |
+| `[?row "price" 42]` | …plus skip row groups whose min/max cannot contain 42 |
+| `[nil nil nil]` | everything, honestly expensively |
+
+**This namespace does not speak SQL.** `ITabularEngine` receives a *request*
+(`{:columns :row :filters}`) and owns the dialect. So a predicate is checked
+against the file's real columns before it can leave, values travel as data,
+and a pattern — which is attacker-controlled in a multi-tenant deployment —
+never becomes an identifier in a statement. It also makes the pushdown
+testable without an engine: a fake that records requests proves the column was
+projected, which an answer-only test cannot, because a source that reads every
+row and filters in memory returns the identical set.
+
+Two shapes, because **a table row is not a set of facts**:
+
+- `wide-source` — one subject per row, one column per predicate. This is what
+  real analytics files look like, and it can hold **at most one value per
+  (subject, predicate)**. There is no cell for `alice likes tea` *and*
+  `alice likes coffee`.
+- `long-source` — one datom per row, in `s`/`p`/`o` columns. Expresses
+  anything.
+
+That limit is why `datom.source.conformance` runs against `long-source`: its
+corpus contains exactly that multi-valued pair, so a wide table cannot
+represent the suite. `wide-source` gets its own corpus, plus a test pinning
+the limitation so it is documented rather than discovered.
+
+A NULL cell yields **no datom**. EAV has no way to say "the value is nil", and
+inventing one would make `[nil "note" nil]` return a row for every object that
+has no note.
+
 ## What the sniffer will and will not tell you
 
 `kotobase.lake.sniff` reads a bounded prefix, never parses, and returns `nil`
