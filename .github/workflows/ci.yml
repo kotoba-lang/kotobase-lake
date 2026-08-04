@@ -1,0 +1,35 @@
+name: test
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with: { cli: latest }
+
+      - name: JVM
+        run: clojure -M:test
+
+      # Not a duplicate of the JVM run, and this is not a theoretical concern:
+      # the first green JVM run of this suite sat on top of a cljs-only defect
+      # (`(int "%")` is 0 in ClojureScript, so every ASCII magic byte string
+      # compiled to all-zeros and matched any zero-filled buffer). 15 of 118
+      # assertions failed here while the JVM reported 0 failures.
+      - run: npm install -g nbb
+      - name: ClojureScript (nbb, interpreted)
+        run: |
+          nbb --classpath "src:test:$(clojure -Spath | tr ':' '\n' | grep datom-source | head -1)" test/run.cljs
+
+      # And under real compilation, which nbb's SCI interpretation cannot
+      # stand in for.
+      - name: ClojureScript (cljs.main, compiled)
+        run: clojure -M:cljs -m cljs.main --target node -m kotobase.lake.cljs-runner
+
+      - name: lint
+        run: clojure -M:lint
