@@ -17,12 +17,22 @@
       member/object           obj:<cid>
       member/rows             1000
       member/partition/region \"east\"
+      member/column/price     \"int64\"
       member/min/price        10
       member/max/price        30
       member/nulls/price      0
 
   Attribute-per-column, because that is what makes it joinable. A blob of EDN
   under one attribute would be a manifest the query plane cannot see into.
+
+  ## Members do not have to agree about their columns
+
+  `member/column/*` records each file's OWN schema, which is why
+  `table-schema` can unify them — a column added last month, a width that
+  changed, a file that predates a field — **without opening anything**. The
+  reconciliation itself is `columnar.evolve`, which is also where the rule
+  lives that makes it safe: an absent column is all-null, so it prunes rather
+  than being read to discover nothing matches.
 
   ## Pruning a file is the same operation as pruning a row group
 
@@ -53,6 +63,7 @@
   would be the natural shape and would defeat the entire namespace — the
   pruning would be perfect and every file would already be open."
   (:require [clojure.string :as str]
+            [columnar.evolve :as evolve]
             [columnar.stats :as cstats]
             [datom.source :as source]
             [kotobase.lake.catalog :as catalog]))
@@ -66,6 +77,7 @@
 (def ^:private min-prefix "member/min/")
 (def ^:private max-prefix "member/max/")
 (def ^:private nulls-prefix "member/nulls/")
+(def ^:private column-prefix "member/column/")
 
 (defn add-member
   "Quads describing one file's membership in a table.
@@ -73,14 +85,23 @@
   `:statistics` is `{column {:rows n :nulls n :min v :max v}}` — whatever the
   writer recorded. A column absent from the map, or present without bounds, is
   a column this member cannot be pruned on. That is a normal state and the
-  reason `columnar.stats` treats missing bounds as \"no claim\"."
-  [{:keys [table cid rows partition statistics]}]
+  reason `columnar.stats` treats missing bounds as \"no claim\".
+
+  `:schema` is `{column type}` — the member's OWN columns, which are not
+  necessarily the table's. Recorded per column, like the statistics and for
+  the same reason: it has to be joinable. It is what lets
+  `columnar.evolve/unify` decide the table's schema without opening a single
+  file, and a member without it is a member whose columns are unknown until
+  something reads it."
+  [{:keys [table cid rows partition statistics schema]}]
   (let [mid (member-id table cid)]
     (cond-> #{{:s mid :p "member/table" :o table}
               {:s mid :p "member/object" :o (catalog/object-id cid)}
               {:s mid :p "member/rows" :o (long rows)}}
       true (into (map (fn [[col v]] {:s mid :p (str partition-prefix col) :o v}))
                  partition)
+      true (into (map (fn [[col t]] {:s mid :p (str column-prefix col) :o (name t)}))
+                 schema)
       true (into (mapcat (fn [[col {:keys [nulls min max]}]]
                            (cond-> [{:s mid :p (str nulls-prefix col) :o (long (or nulls 0))}]
                              (some? min) (conj {:s mid :p (str min-prefix col) :o min})
@@ -114,6 +135,10 @@
                                               (when (str/starts-with? p partition-prefix)
                                                 [(strip p partition-prefix) v])))
                                    e)
+                  :schema (into {} (keep (fn [[p v]]
+                                           (when (str/starts-with? p column-prefix)
+                                             [(strip p column-prefix) (keyword v)])))
+                                e)
                   :statistics
                   (reduce (fn [acc [p v]]
                             (cond
@@ -125,6 +150,33 @@
                               (assoc-in acc [(strip p nulls-prefix) :nulls] v)
                               :else acc))
                           {} e)})))))
+
+(defn table-schema
+  "The table's schema, unified from every member's own — **without opening a
+  file**.
+
+  This is what the per-column `member/column/*` datoms are for. `add-member`
+  recorded each file's columns, so `columnar.evolve/unify` decides the table's
+  shape out of the manifest, and a member that predates a column is known to
+  predate it before anything is read.
+
+  **Partition columns are deliberately excluded.** They are not in the files —
+  the value is in the path and the manifest — so putting them in the schema a
+  member is reconciled against would make `columnar.evolve` synthesise them as
+  all-null, replacing a value the manifest knows with nothing. `table-source`
+  answers them from `partition-datoms` instead, and the two paths must not
+  both claim the column.
+
+  A member with no recorded schema contributes nothing rather than being
+  treated as empty: unknown columns and no columns are different claims, and
+  only the second one is safe to unify on."
+  [quads table]
+  (let [ms (members quads table)
+        partition-cols (into #{} (mapcat (comp keys :partition)) ms)]
+    (evolve/unify (into [] (comp (map :schema)
+                                 (remove empty?)
+                                 (map #(apply dissoc % partition-cols)))
+                        ms))))
 
 (defn- stats-of
   "A member's statistics for `column`, in the shape `columnar.stats` reads, or
