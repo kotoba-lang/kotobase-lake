@@ -1,6 +1,7 @@
 (ns kotobase.lake.table-test
   (:require [clojure.test :refer [deftest is testing]]
             [datom.source :as source]
+            [columnar.evolve]
             [kotobase.lake.table :as table]))
 
 (def tbl (table/table-id "acme" "sales"))
@@ -122,3 +123,67 @@
     (source/scan-set src [nil "price" 1])
     (source/scan-set src [nil "price" 1])
     (is (= (distinct @opened) @opened) "memoised across scans")))
+
+;; ── schema evolution: members that do not agree about their columns ─────────
+
+(def evolving
+  "Three files written at different times. `note` was added after the first,
+  the second widened `price`, and the third is entirely null in `note` — which
+  makes no claim about its type and must not veto the others."
+  (into #{}
+        (mapcat table/add-member)
+        [{:table tbl :cid "bafkOld" :rows 2 :partition {"region" "east"}
+          :schema {"price" :int32 "region-name" :byte-array}
+          :statistics {"price" {:nulls 0 :min 10 :max 30}}}
+         {:table tbl :cid "bafkNew" :rows 2 :partition {"region" "east"}
+          :schema {"price" :int64 "region-name" :utf8 "note" :utf8}
+          :statistics {"price" {:nulls 0 :min 110 :max 130}}}
+         {:table tbl :cid "bafkNull" :rows 2 :partition {"region" "west"}
+          :schema {"price" :int64 "region-name" :utf8 "note" :null}
+          :statistics {}}]))
+
+(deftest a-member-records-its-own-columns
+  (let [by-cid (into {} (map (juxt :cid :schema)) (table/members evolving tbl))]
+    (is (= {"bafkOld"  {"price" :int32 "region-name" :byte-array}
+            "bafkNew"  {"price" :int64 "region-name" :utf8 "note" :utf8}
+            "bafkNull" {"price" :int64 "region-name" :utf8 "note" :null}}
+           by-cid))))
+
+(deftest the-table-schema-is-unified-without-opening-a-file
+  (let [{:keys [columns types]} (table/table-schema evolving tbl)]
+    ;; First appearance across members, and `members` sorts by member id --
+    ;; so the order follows the manifest, not the order files were written.
+    ;; Deterministic is the property that matters; chronological is not
+    ;; something the manifest records.
+    (is (= ["note" "price" "region-name"] columns))
+    (is (= {"price" :int64        ; widened: only int64 describes every value
+            "region-name" :utf8   ; Parquet's :byte-array and Arrow's :utf8 are
+                                  ; one class and equal width, so the first
+                                  ; member wins the tie
+            "note" :utf8}         ; the all-null member did not veto it
+           types))
+    (testing "and the tie is between ALIASES, so the class is what agrees"
+      (is (= :string (columnar.evolve/class-of (get types "region-name")))))))
+
+(deftest partition-columns-are-not-in-the-table-schema
+  ;; They are not in the files. Putting `region` here would make
+  ;; `columnar.evolve` synthesise it as all-null for every member, replacing a
+  ;; value the manifest knows with nothing — and `table-source` already
+  ;; answers it from the manifest.
+  (is (not (contains? (:types (table/table-schema evolving tbl)) "region")))
+  (is (contains? (:partition (first (table/members evolving tbl))) "region")))
+
+(deftest a-member-with-no-recorded-schema-contributes-nothing
+  ;; Unknown columns and no columns are different claims, and only the second
+  ;; is safe to unify on. `manifest` above records no schemas at all.
+  (is (= {:columns [] :types {}} (table/table-schema manifest tbl))))
+
+(deftest incompatible-columns-across-members-are-refused-by-name
+  (let [clash (into #{}
+                    (mapcat table/add-member)
+                    [{:table tbl :cid "bafkI" :rows 1 :schema {"x" :int64} :statistics {}}
+                     {:table tbl :cid "bafkF" :rows 1 :schema {"x" :double} :statistics {}}])
+        e (try (table/table-schema clash tbl) nil
+               (catch #?(:clj Exception :cljs :default) e (ex-data e)))]
+    (is (= :columnar/incompatible-types (:type e)))
+    (is (= "x" (:column e)))))
