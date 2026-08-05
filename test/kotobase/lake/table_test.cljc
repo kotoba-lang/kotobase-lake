@@ -187,3 +187,88 @@
                (catch #?(:clj Exception :cljs :default) e (ex-data e)))]
     (is (= :columnar/incompatible-types (:type e)))
     (is (= "x" (:column e)))))
+
+;; ── snapshots and time travel ───────────────────────────────────────────────
+
+(def ^:private m-a (table/member-id tbl "bafkA"))
+(def ^:private m-b (table/member-id tbl "bafkB"))
+(def ^:private m-c (table/member-id tbl "bafkC"))
+
+(def history
+  "Three snapshots: one file, then two, then the third replacing the second —
+  which is what a compaction or a correction looks like."
+  (into manifest
+        (concat
+         (table/snapshot {:table tbl :id "s1" :at "2026-08-01T00:00:00Z"
+                          :members [m-a]})
+         (table/snapshot {:table tbl :id "s2" :at "2026-08-02T00:00:00Z"
+                          :parent "s1" :members [m-a m-b]})
+         (table/snapshot {:table tbl :id "s3" :at "2026-08-03T00:00:00Z"
+                          :parent "s2" :members [m-a m-c]})
+         (table/set-current tbl "s3"))))
+
+(defn- sid [id] (table/snapshot-id tbl id))
+
+(deftest a-snapshot-names-its-members-explicitly
+  (is (= [m-a] (table/snapshot-members history (sid "s1"))))
+  (is (= [m-a m-b] (table/snapshot-members history (sid "s2"))))
+  (is (= [m-a m-c] (table/snapshot-members history (sid "s3")))))
+
+(deftest the-current-pointer-is-the-only-mutable-thing
+  (is (= (sid "s3") (table/current history tbl)))
+  (testing "and a table that was never snapshotted has none"
+    (is (nil? (table/current manifest tbl)))))
+
+(deftest an-old-snapshot-keeps-answering-what-it-answered
+  ;; The whole mechanism. s2 named bafkB; s3 does not. Querying s2 still sees
+  ;; it, because writing s3 did not edit s2.
+  (is (= ["bafkA"] (mapv :cid (table/members-at history tbl (sid "s1")))))
+  (is (= ["bafkA" "bafkB"] (mapv :cid (table/members-at history tbl (sid "s2")))))
+  (is (= ["bafkA" "bafkC"] (mapv :cid (table/members-at history tbl (sid "s3"))))))
+
+(deftest a-nil-snapshot-is-the-table-as-it-stands
+  ;; What a caller predating snapshots meant, and what an unsnapshotted table
+  ;; is. NOT the same as an empty snapshot.
+  (is (= ["bafkA" "bafkB" "bafkC"] (mapv :cid (table/members-at history tbl nil))))
+  (testing "an empty snapshot is a table deliberately emptied, and stays expressible"
+    (let [emptied (into history (table/snapshot {:table tbl :id "s4" :parent "s3"
+                                                 :members []}))]
+      (is (= [] (mapv :cid (table/members-at emptied tbl (sid "s4"))))))))
+
+(deftest lineage-is-the-parent-pointer-not-the-timestamp
+  (is (= [(sid "s3") (sid "s2") (sid "s1")] (table/ancestry history (sid "s3"))))
+  (is (= [(sid "s1")] (table/ancestry history (sid "s1"))))
+  (testing "a hand-built cycle stops instead of looping"
+    (let [looped (into #{} (concat
+                            (table/snapshot {:table tbl :id "x" :parent "y" :members []})
+                            (table/snapshot {:table tbl :id "y" :parent "x" :members []})))]
+      (is (= 2 (count (table/ancestry looped (sid "x"))))))))
+
+(deftest a-query-runs-against-a-snapshot
+  (let [opened (atom #{})
+        src (table/table-source {:quads history :table tbl
+                                 :snapshot (sid "s2")
+                                 :open-member (opener opened)})]
+    (is (= #{{:s "obj:bafkA#row0" :p "price" :o 10}
+             {:s "obj:bafkA#row1" :p "price" :o 30}
+             {:s "obj:bafkB#row0" :p "price" :o 110}
+             {:s "obj:bafkB#row1" :p "price" :o 130}}
+           (source/scan src [nil "price" nil])))
+    (is (= #{"bafkA" "bafkB"} @opened) "bafkC belongs to s3 and was never opened")))
+
+(deftest the-schema-is-per-snapshot
+  ;; A column added later is not in the table as it was before it was added.
+  (let [q (into evolving
+                (concat (table/snapshot {:table tbl :id "e1"
+                                         :members [(table/member-id tbl "bafkOld")]})
+                        (table/snapshot {:table tbl :id "e2" :parent "e1"
+                                         :members [(table/member-id tbl "bafkOld")
+                                                   (table/member-id tbl "bafkNew")]})))]
+    (is (= ["price" "region-name"]
+           (:columns (table/table-schema q tbl (table/snapshot-id tbl "e1")))))
+    (is (= {"price" :int32 "region-name" :byte-array}
+           (:types (table/table-schema q tbl (table/snapshot-id tbl "e1")))))
+    (testing "and the later snapshot has the added column, widened"
+      (let [{:keys [columns types]} (table/table-schema q tbl (table/snapshot-id tbl "e2"))]
+        (is (= #{"price" "region-name" "note"} (set columns)))
+        (is (= :int64 (get types "price")))))))
