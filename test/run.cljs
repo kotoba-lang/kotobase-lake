@@ -10,6 +10,7 @@
   (:require [clojure.test :as t]
             [kotobase.lake.catalog-test]
             [kotobase.lake.compact-test]
+            [kotobase.lake.rdf-test]
             [kotobase.lake.reader-test]
             [kotobase.lake.sniff-test]
             [kotobase.lake.acquire-test]
@@ -22,7 +23,7 @@
 
 (t/run-tests 'kotobase.lake.sniff-test
              'kotobase.lake.catalog-test 'kotobase.lake.compact-test
-             'kotobase.lake.reader-test
+             'kotobase.lake.rdf-test 'kotobase.lake.reader-test
              'kotobase.lake.tabular-test
              'kotobase.lake.acquire-test
              'kotobase.lake.table-test)

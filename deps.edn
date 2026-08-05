@@ -13,7 +13,17 @@
          :git/sha "309822ec42387c1eccfb19bcea64a4bdff3fa8bb"}
         io.github.kotoba-lang/datom-source
         {:git/url "https://github.com/kotoba-lang/datom-source.git"
-         :git/sha "b42f6e6ff942c7f8a2856f8142ebffc13aa11098"}}
+         :git/sha "b42f6e6ff942c7f8a2856f8142ebffc13aa11098"}
+        ;; N-Triples. The one format whose decoded output IS this repo's datom
+        ;; shape -- RDF statements are subject-predicate-object -- so the
+        ;; adapter is a term-to-value mapping rather than a decoder, and it
+        ;; belongs where the datom shape is defined. Zero-dep portable .cljc,
+        ;; so the transitive cost is nil. Parquet and Arrow stay OUT of this
+        ;; repo's deps for the opposite reason: they need byte-range machinery
+        ;; the lake has no business carrying.
+        io.github.kotoba-lang/org-w3-nquads
+        {:git/url "https://github.com/kotoba-lang/org-w3-nquads.git"
+         :git/sha "794846ca2e718f0b390b0856a8487bc40fa43323"}}
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner
