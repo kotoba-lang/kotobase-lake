@@ -9,6 +9,7 @@
   minutes on a loaded machine."
   (:require [clojure.test :as t]
             [kotobase.lake.catalog-test]
+            [kotobase.lake.compact-test]
             [kotobase.lake.reader-test]
             [kotobase.lake.sniff-test]
             [kotobase.lake.acquire-test]
@@ -20,7 +21,7 @@
     (js/process.exit 1)))
 
 (t/run-tests 'kotobase.lake.sniff-test
-             'kotobase.lake.catalog-test
+             'kotobase.lake.catalog-test 'kotobase.lake.compact-test
              'kotobase.lake.reader-test
              'kotobase.lake.tabular-test
              'kotobase.lake.acquire-test
