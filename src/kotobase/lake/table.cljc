@@ -34,6 +34,24 @@
   lives that makes it safe: an absent column is all-null, so it prunes rather
   than being read to discover nothing matches.
 
+  ## A table has a history, and it is made of pointers
+
+  A snapshot names its members **explicitly** — it is not \"whatever existed at
+  time T\", because a datom carries no time and there is no clock to ask.
+  Adding a file writes a new snapshot naming the old members plus the new one;
+  it never edits an existing one, which is what lets an old snapshot keep
+  answering what it answered.
+
+      table/current           snapshot:<table>|<id>
+      snapshot/table          table:<tenant>|<name>
+      snapshot/parent         snapshot:<table>|<earlier>
+      snapshot/member         member:<table>|<cid>
+
+  `table/current` is the only mutable thing here, exactly like a git ref, and
+  **lineage is the parent pointer rather than the timestamp**: clocks on
+  different writers disagree, and a history sorted by them reorders itself
+  when one of them is wrong.
+
   ## Pruning a file is the same operation as pruning a row group
 
   `columnar.stats/skip?` decides whether a chunk can be ruled out from its
@@ -151,6 +169,105 @@
                               :else acc))
                           {} e)})))))
 
+;; ── snapshots ───────────────────────────────────────────────────────────────
+
+(defn snapshot-id [table id] (str "snapshot:" table sep id))
+
+(def ^:private snapshot-member-p "snapshot/member")
+
+(defn snapshot
+  "Quads for a snapshot of `table` naming exactly `members` (member ids).
+
+  ## A snapshot names its members explicitly
+
+  It is not \"whatever existed at time T\". The manifest is a set of datoms and
+  a datom carries no time, so there is nothing to ask a clock about — explicit
+  membership is what makes \"the table at T\" answerable at all, rather than a
+  question the plane cannot represent.
+
+  ## Snapshots are immutable; only the pointer moves
+
+  Adding a file writes a NEW snapshot naming the old members plus the new one.
+  It never edits an existing one. That is the whole mechanism: an old snapshot
+  keeps naming the members it named, so a query against it keeps answering
+  what it answered. `set-current` moves a single pointer, exactly like a git
+  ref, and it is the only mutable thing here.
+
+  ## Lineage is the parent pointer, not the timestamp
+
+  `:at` is metadata and nothing reads it for ordering. Clocks on different
+  writers disagree, and a table whose history is sorted by them reorders
+  itself when one of them is wrong. `:parent` is what `ancestry` walks.
+
+  ## Identity comes from the caller
+
+  `:id` is whatever the caller uses — a CID, a ULID, a counter. This namespace
+  does not mint it, for the same reason `add-member` takes a `cid` rather than
+  hashing bytes: identity is not the manifest's to invent, and a lake that
+  minted its own would have two answers to \"is this the same snapshot\"."
+  [{:keys [table id at parent members]}]
+  (let [sid (snapshot-id table id)]
+    (cond-> #{{:s sid :p "snapshot/table" :o table}
+              {:s sid :p "snapshot/id" :o id}}
+      at (conj {:s sid :p "snapshot/at" :o at})
+      parent (conj {:s sid :p "snapshot/parent" :o (snapshot-id table parent)})
+      true (into (map (fn [m] {:s sid :p snapshot-member-p :o m})) members))))
+
+(defn set-current
+  "The pointer datom. Replacing it is how a table advances — and the caller
+  removes the old one, because a table with two `table/current` datoms has no
+  current snapshot rather than two."
+  [table id]
+  #{{:s table :p "table/current" :o (snapshot-id table id)}})
+
+(defn current
+  "The snapshot id `table/current` points at, or nil for a table that has
+  never been snapshotted."
+  [quads table]
+  (->> quads
+       (filter #(and (= table (:s %)) (= "table/current" (:p %))))
+       first
+       :o))
+
+(defn snapshot-members
+  "Member ids named by `sid`, sorted — the same reason `members` sorts."
+  [quads sid]
+  (->> quads
+       (filter #(and (= sid (:s %)) (= snapshot-member-p (:p %))))
+       (map :o)
+       distinct
+       sort
+       vec))
+
+(defn ancestry
+  "`sid` and its parents, newest first.
+
+  Walks `snapshot/parent`, not timestamps. Cycles cannot be created by
+  `snapshot` (a parent must already exist to be named) but a hand-built
+  manifest could, so the walk stops on a repeat rather than looping."
+  [quads sid]
+  (loop [id sid seen #{} out []]
+    (if (or (nil? id) (contains? seen id))
+      out
+      (let [parent (->> quads
+                        (filter #(and (= id (:s %)) (= "snapshot/parent" (:p %))))
+                        first :o)]
+        (recur parent (conj seen id) (conj out id))))))
+
+(defn members-at
+  "Members of `table` as of `sid`, or every member when `sid` is nil.
+
+  nil means \"the table as it stands\", which is what a table that has never
+  been snapshotted is and what every caller predating snapshots meant. It is
+  not the same as an empty snapshot: a snapshot naming no members is a table
+  that was deliberately emptied, and that has to stay expressible."
+  [quads table sid]
+  (let [all (members quads table)]
+    (if (nil? sid)
+      all
+      (let [named (set (snapshot-members quads sid))]
+        (filterv #(contains? named (:member %)) all)))))
+
 (defn table-schema
   "The table's schema, unified from every member's own — **without opening a
   file**.
@@ -170,13 +287,14 @@
   A member with no recorded schema contributes nothing rather than being
   treated as empty: unknown columns and no columns are different claims, and
   only the second one is safe to unify on."
-  [quads table]
-  (let [ms (members quads table)
+  ([quads table] (table-schema quads table nil))
+  ([quads table sid]
+  (let [ms (members-at quads table sid)
         partition-cols (into #{} (mapcat (comp keys :partition)) ms)]
     (evolve/unify (into [] (comp (map :schema)
                                  (remove empty?)
                                  (map #(apply dissoc % partition-cols)))
-                        ms))))
+                        ms)))))
 
 (defn- stats-of
   "A member's statistics for `column`, in the shape `columnar.stats` reads, or
@@ -238,8 +356,8 @@
   file. `on-prune` is an optional `(fn [{:keys [live skipped pattern]}])` —
   tests use it to prove that pruning happened, which the answers alone cannot
   show."
-  [{:keys [quads table open-member on-prune]}]
-  (let [ms (members quads table)
+  [{:keys [quads table open-member on-prune snapshot]}]
+  (let [ms (members-at quads table snapshot)
         opened (atom {})
         open! (fn [m] (or (get @opened (:member m))
                           (let [s (open-member m)]
