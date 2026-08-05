@@ -30,6 +30,34 @@
   falsey — a difference in a `:reason` key would leak exactly as well as a
   difference in status code.
 
+  ## This gate is about AUTHORIZATION, not confidentiality
+
+  Worth stating plainly here, because the paragraph above is exactly what
+  makes a reader believe otherwise: a namespace that works this hard to avoid
+  a membership oracle looks like one that keeps tenant data secret. It does
+  not, and it cannot.
+
+  What is gated is **the query path**. Whether the bytes themselves are
+  readable by someone who never came through this gate depends entirely on
+  where the deployment put them, and this namespace never learns that —
+  `read-range` is supplied by the caller.
+
+  In the deployment this workspace actually runs, they **are** world-readable:
+  `net-kotobase` archives objects at `<prefix>/objects/<cid>` and serves them
+  from an unauthenticated `GET /ipfs/<cid>`. That is a documented, smoke-tested
+  public surface rather than an oversight — its threat model scopes the 401
+  requirement to *write* surfaces, and its data-handling document states that
+  content-addressed bytes stay retrievable from archives and gateways by
+  anyone holding the CID.
+
+  So the honest boundary is:
+
+  - this gate decides **who may query an object through the lake**
+  - it decides **nothing** about who may fetch its bytes by CID
+  - **tenant-confidential data must be encrypted before admission**, because
+    the CID of anything a caller can reconstruct is computable by that caller,
+    and the gateway will serve it
+
   ## Nothing is fetched before the gate
 
   `read-range` is a *function*, not bytes, and it is only ever passed to a
