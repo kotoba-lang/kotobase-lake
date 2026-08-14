@@ -10,10 +10,10 @@
         ;; join between them.
         io.github.kotoba-lang/columnar
         {:git/url "https://github.com/kotoba-lang/columnar.git"
-         :git/sha "309822ec42387c1eccfb19bcea64a4bdff3fa8bb"}
+         :git/sha "6e417bc70b530c0ae9d5236cadd30e3ce6df5b6a"}
         io.github.kotoba-lang/datom-source
         {:git/url "https://github.com/kotoba-lang/datom-source.git"
-         :git/sha "b42f6e6ff942c7f8a2856f8142ebffc13aa11098"}
+         :git/sha "3a99b1b1fb2d2f8736995076eb1ab5f94f0808b7"}
         ;; N-Triples. The one format whose decoded output IS this repo's datom
         ;; shape -- RDF statements are subject-predicate-object -- so the
         ;; adapter is a term-to-value mapping rather than a decoder, and it

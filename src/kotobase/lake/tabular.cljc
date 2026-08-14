@@ -62,15 +62,18 @@
     construction: it is the allowlist that keeps a pattern's predicate from
     reaching the engine as an identifier.")
   (-select [engine request]
-    "`request` is `{:columns [..] :row n-or-nil :filters [[col value] ..]}`.
+    "`request` is `{:columns [..] :row n-or-nil :filters [[col value] ..]
+    :predicates [[op col v] ..]}`.
 
     Returns a seq of maps keyed by column name (string), each carrying
     `:kotobase.lake.tabular/row` — the row's stable number.
 
-    `:columns` nil means every column. `:filters` are equality predicates the
-    engine SHOULD push down; returning more rows than asked is a performance
-    bug, not a correctness one, because this namespace re-checks. Returning
-    FEWER is a correctness bug and the conformance suite catches it."))
+    `:columns` nil means every column. `:filters` are equality predicates and
+    `:predicates` are range/comparison ops (`:<` `:>` `:<=` `:>=` `:=`) the
+    engine SHOULD push down so stats/byte-range can prune. Returning more
+    rows than asked is a performance bug, not a correctness one, because
+    this namespace re-checks. Returning FEWER is a correctness bug and the
+    conformance suite catches it."))
 
 (def ^:private row-key ::row)
 
@@ -134,6 +137,21 @@
                                  (when (or (nil? o) (= o v))
                                    {:s (row-subject prefix n) :p c :o v}))))
                            projected))))
+                rows)))))
+  source/IRangeSource
+  (-scan-range [_ attr lo hi opts]
+    (let [cols (set columns)]
+      (if (not (cols attr))
+        #{}
+        (let [preds (cond-> []
+                      (some? lo) (conj [(if (:lo-open? opts) :> :>=) attr lo])
+                      (some? hi) (conj [(if (false? (:hi-open? opts)) :<= :<) attr hi]))
+              rows (-select engine {:columns [attr] :row nil :filters [] :predicates preds})]
+          (into #{}
+                (keep (fn [r]
+                        (let [v (get r attr)]
+                          (when (and (some? v) (source/in-range? v lo hi opts))
+                            {:s (row-subject prefix (get r row-key)) :p attr :o v}))))
                 rows))))))
 
 (defn wide-source
