@@ -15,11 +15,23 @@
      :engine
      (reify tab/ITabularEngine
        (-columns [_] columns)
-       (-select [_ {:keys [columns row filters] :as request}]
+       (-select [_ {:keys [columns row filters predicates] :as request}]
          (swap! log conj request)
          (cond->> rows
            (some? row) (filter #(= row (get % tab/row-attribute)))
            (seq filters) (filter (fn [r] (every? (fn [[c v]] (= v (get r c))) filters)))
+           (seq predicates)
+           (filter (fn [r]
+                     (every? (fn [[op c v]]
+                               (let [got (get r c)]
+                                 (case op
+                                   := (= got v)
+                                   :< (and (some? got) (neg? (compare got v)))
+                                   :<= (and (some? got) (not (pos? (compare got v))))
+                                   :> (and (some? got) (pos? (compare got v)))
+                                   :>= (and (some? got) (not (neg? (compare got v))))
+                                   true)))
+                             predicates)))
            (some? columns) (map #(select-keys % (conj (vec columns) tab/row-attribute))))))}))
 
 ;; ── long: the shape a table can fully express ───────────────────────────────
@@ -127,3 +139,15 @@
           "one column, two values: a wide row has nowhere to put the second --
            which is why the standard suite is run against long-source and
            wide-source gets its own corpus"))))
+
+(deftest wide-source-pushes-a-value-range
+  (let [{:keys [log engine]} (wide)
+        src (tab/wide-source {:engine engine :subject-prefix "obj:x#row"})
+        got (source/scan-range src "price" 100 250)]
+    (is (= #{{:s "obj:x#row0" :p "price" :o 100}
+             {:s "obj:x#row2" :p "price" :o 100}}
+           got)
+        "[100, 250) keeps 100 and drops 250")
+    (is (= [[:>= "price" 100] [:< "price" 250]]
+           (:predicates (last @log)))
+        "the interval reaches the engine as predicates, not a full column scan")))
