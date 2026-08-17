@@ -10,6 +10,7 @@
   (:require [clojure.test :as t]
             [kotobase.lake.catalog-test]
             [kotobase.lake.compact-test]
+            [kotobase.lake.docs-test]
             [kotobase.lake.rdf-test]
             [kotobase.lake.reader-test]
             [kotobase.lake.sniff-test]
@@ -21,9 +22,13 @@
   (when-not (t/successful? m)
     (js/process.exit 1)))
 
-(t/run-tests 'kotobase.lake.sniff-test
-             'kotobase.lake.catalog-test 'kotobase.lake.compact-test
-             'kotobase.lake.rdf-test 'kotobase.lake.reader-test
-             'kotobase.lake.tabular-test
-             'kotobase.lake.acquire-test
-             'kotobase.lake.table-test)
+;; `run-all-tests` over the required namespaces, not a second hand-written
+;; list. Measured 2026-08-17: this runner listed eight namespaces while the
+;; suite had nine, so it reported 77 tests where the JVM reported 84 -- green
+;; both times, seven tests never executed. The namespace it was missing had
+;; been added to `cljs_runner.cljs` and to the JVM run the same day and simply
+;; forgotten here, which is precisely what two hand-maintained lists are for.
+;; One list is still one too many; a missing `:require` above would still
+;; drop silently. That one at least fails loudly the moment anything else in
+;; the file refers to the namespace.
+(t/run-all-tests #"^kotobase\.lake\..*-test$")
