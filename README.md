@@ -240,6 +240,31 @@ every file would already be open.
 sorting, the order files are opened in — and rows come back in, when a caller
 imposes none — is whatever the collection iterates in today.
 
+## One encoding, because two would look like a refusal
+
+`admit` produces quads; a kotobase graph stores documents.
+`kotobase.lake.docs` is that conversion, and it holds **both directions** —
+`quads->docs` for the ingest path, `from-state` for the query path.
+
+```clojure
+(docs/admitted->docs (catalog/admit descriptor))
+;; => {"obj:bafkrei…"           {"object/cid" "bafkrei…" "object/size" 2427}
+;;     "claim:did:key:z…|baf…"  {"claim/tenant" "did:key:z…" …}}
+```
+
+They are one namespace because a writer and a reader that disagreed would
+make `acquire/holds?` false for an object that is right there — and that is
+byte-identical to the answer the gate gives someone who may not have it.
+A misencoded catalog does not fail; it becomes invisible.
+
+That argument only holds while both sides load the same code, so the
+encoding lives here rather than beside either one. The reader's Worker
+(`net-kotobase/lake`) re-exports it; the ingest path requires it directly.
+`docs_test.cljc` asserts the end state rather than the round trip:
+documents produced from an admission, hydrated back, open `acquire/holds?`
+for the tenant that ingested and for nobody else — a round trip alone stays
+green when both directions agree on an encoding the gate cannot read.
+
 ## Where this sits
 
 ```
