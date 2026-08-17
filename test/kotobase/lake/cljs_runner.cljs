@@ -21,11 +21,9 @@
   (when-not (t/successful? m)
     (js/process.exit 1)))
 
+;; `run-all-tests` over the required namespaces rather than a second
+;; hand-written list. The sibling runner `test/run.cljs` carried such a list
+;; and was measured one namespace short on 2026-08-17 -- 77 tests where the
+;; JVM ran 84, green both times.
 (defn -main [& _]
-  (t/run-tests 'kotobase.lake.sniff-test
-               'kotobase.lake.catalog-test 'kotobase.lake.compact-test
-               'kotobase.lake.docs-test
-               'kotobase.lake.rdf-test 'kotobase.lake.reader-test
-             'kotobase.lake.tabular-test
-             'kotobase.lake.acquire-test
-             'kotobase.lake.table-test))
+  (t/run-all-tests #"^kotobase\.lake\..*-test$"))
