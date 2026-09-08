@@ -29,7 +29,7 @@
   closed later. It is the reason `:object/media-type` must survive as a
   *claim* on the ingest record instead of being replaced by what the lake
   observed: for a large share of real data, observation has nothing to say."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def prefix-bytes
   "How many leading bytes `prefix` retains. See the namespace docstring for
@@ -159,4 +159,4 @@
   nil/blank -- absent is not the empty string."
   [mt]
   (when (and mt (not (str/blank? mt)))
-    (-> mt (str/split #";") first str/trim str/lower-case)))
+    (-> mt (str/split #";") first str/trim str/lower)))

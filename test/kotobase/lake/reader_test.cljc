@@ -1,5 +1,5 @@
 (ns kotobase.lake.reader-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [datom.source :as source]
             [kotobase.lake.catalog :as cat]

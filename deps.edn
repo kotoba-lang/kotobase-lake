@@ -4,7 +4,12 @@
  ;; `IPatternSource` is the declared seam every kotobase query path plugs
  ;; into -- a second definition of that protocol would be a second thing for
  ;; a query surface to fail to recognise.
- :deps {;; The execution engine the scan path runs on. Zero-dep itself, so the
+ :deps {
+        ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
+        ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
+        ;; this repo silently rides whatever a sibling happens to name.
+        io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
+       ;; The execution engine the scan path runs on. Zero-dep itself, so the
         ;; transitive cost of pulling it in is nil, and the lake's read side
         ;; genuinely needs an engine — kotobase.lake.columnar is the ten-line
         ;; join between them.

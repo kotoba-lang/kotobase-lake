@@ -42,7 +42,7 @@
   `:claim/declared-vs-observed :conflict` and left for the reader to judge.
   Rejecting it would mean the lake refuses precisely the objects most worth
   investigating."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [kotobase.lake.sniff :as sniff]))
 
 (def ^:private id-separator "|")
