@@ -80,7 +80,7 @@
   table source opens nothing. Constructing sources eagerly and merging them
   would be the natural shape and would defeat the entire namespace — the
   pruning would be perfect and every file would already be open."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [columnar.evolve :as evolve]
             [columnar.stats :as cstats]
             [datom.source :as source]

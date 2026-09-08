@@ -53,7 +53,7 @@
   is why `datom.source.conformance` (whose corpus contains exactly that pair)
   is run against `long-source` and cannot be run against `wide-source`.
   `wide-source` gets its own suite over a corpus a table can actually hold."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [datom.source :as source]))
 
 (defprotocol ITabularEngine
