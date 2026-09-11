@@ -29,7 +29,7 @@ jobs:
         # "Could not find namespace", which reads like a code error rather
         # than a build one. Caught by CI, having passed locally, because
         # locally the full -Spath was used.
-        run: nbb --classpath "src:test:$(clojure -Spath)" test/run.cljs
+        run: nbb --classpath "src:test:$(clojure -Spath)" test/run.cljk
 
       # And under real compilation, which nbb's SCI interpretation cannot
       # stand in for.

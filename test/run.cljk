@@ -2,7 +2,7 @@
   "nbb entry point for the portable suite -- the same shape
   `kotobase-storage` uses, and the cheap one to run locally.
 
-  `test/kotobase/lake/cljs_runner.cljs` is the other half: `cljs.main` under
+  `test/kotobase/lake/cljs_runner.cljk` is the other half: `cljs.main` under
   real ClojureScript compilation, which is what CI gates on. Both exist
   because they fail differently -- nbb is SCI-interpreted and will not catch
   an advanced-compilation or a self-host-only defect, and cljs.main takes

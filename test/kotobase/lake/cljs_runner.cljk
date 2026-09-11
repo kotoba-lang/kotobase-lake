@@ -22,7 +22,7 @@
     (js/process.exit 1)))
 
 ;; `run-all-tests` over the required namespaces rather than a second
-;; hand-written list. The sibling runner `test/run.cljs` carried such a list
+;; hand-written list. The sibling runner `test/run.cljk` carried such a list
 ;; and was measured one namespace short on 2026-08-17 -- 77 tests where the
 ;; JVM ran 84, green both times.
 (defn -main [& _]
