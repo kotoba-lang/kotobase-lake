@@ -308,10 +308,10 @@ analytic-scan story is a separate question from the accept-anything one.
 ## Test
 
 ```sh
-clojure -M:test                                              # JVM
-nbb --classpath "src:test:$(clojure -Spath)" test/run.cljk
-clojure -M:cljs -m cljs.main --target node -m kotobase.lake.cljs-runner
-clojure -M:lint
+kbb -M:test                                              # JVM
+kbb --backend sci --classpath "src:test:$(kbb -Spath)" test/run.cljk
+kbb -M:cljs -m cljs.main --target node -m kotobase.lake.cljs-runner
+kbb -M:lint
 ```
 
 All of them, as CI runs them. The ClojureScript halves are not duplicates of
