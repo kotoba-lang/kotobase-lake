@@ -46,7 +46,7 @@
   type into the string, which invents a syntax the rest of the lake does not
   read. Stated instead: a caller that needs the distinction should not flatten
   RDF into the datom plane, and one that is querying values does not."
-  (:require [nquads.core :as nq]))
+  (:require [kotoba.bytes :as kbytes] [nquads.core :as nq]))
 
 
 (defn- coerce
@@ -112,7 +112,7 @@
     (statements->quads object-id
                        (nq/parse (if (string? bytes)
                                    bytes
-                                   #?(:clj (String. (byte-array (map unchecked-byte bytes)) "UTF-8")
+                                   #?(:clj (kbytes/utf8-string (byte-array (map unchecked-byte bytes)))
                                       :cljs (.decode (js/TextDecoder. "utf-8")
                                                      (js/Uint8Array. (clj->js (vec bytes))))))))))
 
